@@ -357,8 +357,9 @@ PAGE = r"""<!doctype html>
 <body>
 <header>
   <h1>I-94 Traffic Forecast</h1>
-  <p>Predicts westbound traffic volume for the next hour from the last 24 hours of
-     readings, calendar position and weather. Same model, same feature code as the report.</p>
+  <p>Westbound Interstate 94, Minnesota DOT station 301, between Minneapolis and St&nbsp;Paul.
+     Predicts the next hour's traffic volume from the last 24 hours of readings, calendar
+     position and weather. Same model, same feature code as the report.</p>
 </header>
 
 <main>
@@ -592,8 +593,8 @@ async function init(){
   $('#go').addEventListener('click', predict);
 
   $('#footer').textContent =
-    `Model: ${META.model.name} | test MAE ${META.model.mae} veh/h | R2 ${META.model.r2} | ` +
-    `dataset covers ${META.data_range[0]} to ${META.data_range[1]}`;
+    `I-94 westbound, MN DOT station 301 | Model: ${META.model.name} | test MAE ${META.model.mae} veh/h | ` +
+    `R2 ${META.model.r2} | dataset covers ${META.data_range[0]} to ${META.data_range[1]}`;
 }
 
 init();
