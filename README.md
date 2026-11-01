@@ -47,7 +47,8 @@ Predicted volumes are additionally mapped to congestion tiers: **< 1500 free-flo
 ├── models.py         # model pipelines and hyperparameter search spaces
 ├── evaluate.py       # metrics, comparison table, error analysis, figures
 ├── eda.py            # exploratory data analysis plots
-├── ui.py             # small web UI for manual predictions
+├── ui.py             # small web UI for manual predictions (stdlib only)
+├── app.py            # Streamlit front end, same model and feature code
 ├── run.py            # single entry point for the whole pipeline
 ├── requirements.txt
 ├── data/
@@ -78,19 +79,51 @@ This executes the full pipeline in order: download and clean the raw data, build
 
 ## Interactive UI
 
+Two front ends ship with the project. They share `ui.predict_from_payload()`, so the same inputs always produce the same number in both.
+
+### Streamlit
+
+```bash
+streamlit run app.py
+```
+
+Opens <http://localhost:8501>. Widgets for date, hour, weather and holiday, plus an editable 25-row table of hourly readings with presets. The forecast updates as you change anything; no predict button.
+
+### Standard library
+
 ```bash
 python ui.py
 ```
 
-Opens <http://localhost:8000>. The page takes a date and hour, the weather at that hour, and the 25 hourly readings from 24 hours ago up to the current hour — then returns the forecast for the next hour, its congestion tier, and the recorded value if that hour exists in the dataset.
+Opens <http://localhost:8000>. No framework, no extra dependency.
 
-The UI uses only the Python standard library (no Streamlit or Flask), loads `outputs/models/best_model.joblib`, and builds its input row by calling `features.build_features()`. It therefore shares the exact feature code used in training: the same history produces the same row, and the same prediction, as the notebook pipeline.
+### What the UI asks for, and why 25 readings
+
+The page takes a date and hour, the weather at that hour, and the **25 hourly readings from 24 hours ago up to and including the current hour**. The count is not arbitrary:
+
+```
+history[0]    = 24 h ago  → lag_24h
+history[1:25] = last 24 h → roll_mean_24h, roll_std_24h
+history[24]   = now       → lag_0h
+```
+
+With 24 values there is no reading from `t-24`, so `lag_24h` would be missing and the row unusable. Both UIs build the row by calling `features.build_features()`, so a prediction made in the browser reproduces the pipeline exactly.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--port` | `8000` | Port to listen on |
-| `--host` | `127.0.0.1` | Interface to bind |
-| `--no-browser` | off | Do not open a browser on start |
+| `--port` | `8000` / `8501` | Port to listen on |
+| `--host` | `127.0.0.1` | Interface to bind (`ui.py` only) |
+| `--no-browser` | off | Do not open a browser on start (`ui.py` only) |
+
+### Deploying to Streamlit Community Cloud
+
+1. Push this repository to GitHub.
+2. On <https://share.streamlit.io>, choose **New app**, pick the repo, branch `main`, and set the main file to `app.py`.
+3. The model must be present. `outputs/models/` is git-ignored because the Random Forest is 64 MB, so either
+   - commit the trained model (`git add -f outputs/models/best_model.joblib`), or
+   - let the app show its "model not available" message and build it once with `python run.py` before pushing.
+
+The app fails with a clear message rather than a traceback when the model is missing.
 
 
 ## Outputs

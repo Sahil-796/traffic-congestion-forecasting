@@ -7,3 +7,8 @@ scikit-learn==1.9.1
 matplotlib==3.11.2
 seaborn==0.13.2
 joblib==1.6.0
+
+# Only needed for the Streamlit front end (app.py). The rest of the pipeline
+# and ui.py run without these.
+streamlit==1.66.1
+altair==6.3.0
