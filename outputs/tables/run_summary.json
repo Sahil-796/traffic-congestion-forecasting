@@ -1,0 +1,40 @@
+{
+  "dataset": "Metro Interstate Traffic Volume",
+  "rows_raw_after_clean": 52551,
+  "train_rows": 22452,
+  "test_rows": 6236,
+  "n_features": 24,
+  "best_model_by_cv": "Random Forest",
+  "metrics": {
+    "Persistence (baseline)": {
+      "MAE": 589.17,
+      "RMSE": 815.08,
+      "R2": 0.8294,
+      "CV_RMSE": null
+    },
+    "Linear Regression": {
+      "MAE": 314.68,
+      "RMSE": 430.84,
+      "R2": 0.9523,
+      "CV_RMSE": 473.71
+    },
+    "KNN": {
+      "MAE": 180.62,
+      "RMSE": 273.44,
+      "R2": 0.9808,
+      "CV_RMSE": 334.93
+    },
+    "Random Forest": {
+      "MAE": 144.46,
+      "RMSE": 224.5,
+      "R2": 0.9871,
+      "CV_RMSE": 261.44
+    },
+    "HistGradientBoosting": {
+      "MAE": 145.15,
+      "RMSE": 222.88,
+      "R2": 0.9872,
+      "CV_RMSE": 266.85
+    }
+  }
+}

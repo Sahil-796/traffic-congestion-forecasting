@@ -1,0 +1,9 @@
+# Pinned to the exact versions the results were produced with.
+# Python 3.13
+numpy==2.5.4
+pandas==3.1.0
+scipy==1.18.1
+scikit-learn==1.9.1
+matplotlib==3.11.2
+seaborn==0.13.2
+joblib==1.6.0

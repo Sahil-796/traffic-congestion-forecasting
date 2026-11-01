@@ -1,0 +1,4 @@
+timestamp,scenario,volume_now,predicted,predicted_tier,actual,actual_tier,abs_error
+2018-01-01T17:00:00,weekday rush hour (17:00),3079.0,2924.0,moderate,2891.0,moderate,33.0
+2018-01-07T12:00:00,weekend midday (Sun 12:00),4070.0,4205.8,congested,4065.0,congested,140.8
+2018-01-01T02:00:00,weekday overnight (02:00),931.0,582.9,free-flow,585.0,free-flow,2.1

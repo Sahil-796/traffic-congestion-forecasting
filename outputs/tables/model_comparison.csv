@@ -1,0 +1,6 @@
+Model,MAE,RMSE,R2,MAPE_%,CV_RMSE,Best_Params
+Random Forest,144.46,224.5,0.9871,6.12,261.44,"n_estimators=300, min_samples_leaf=2, max_features=0.5, max_depth=30"
+HistGradientBoosting,145.15,222.88,0.9872,6.24,266.85,"min_samples_leaf=10, max_leaf_nodes=63, max_iter=800, learning_rate=0.01, l2_regularization=0.1"
+KNN,180.62,273.44,0.9808,9.12,334.93,"weights=distance, p=1, n_neighbors=10"
+Linear Regression,314.68,430.84,0.9523,22.31,473.71,-
+Persistence (baseline),589.17,815.08,0.8294,26.8,,-
