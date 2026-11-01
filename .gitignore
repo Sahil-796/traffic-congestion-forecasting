@@ -8,9 +8,11 @@ __pycache__/
 data/raw/
 data/processed/
 
-# The trained model is 65 MB and is rebuilt by `python run.py`. Figures and
-# tables stay in the repo so the results are readable without running anything.
-outputs/models/
+# The trained model is 65 MB. Only the Random Forest selected by the report is
+# tracked (force-added with `git add -f`), because the hosted Streamlit app
+# needs it at runtime. Everything else in this folder stays local.
+outputs/models/*.joblib
+!outputs/models/best_model.joblib
 
 run.log
 .DS_Store

@@ -119,11 +119,11 @@ With 24 values there is no reading from `t-24`, so `lag_24h` would be missing an
 
 1. Push this repository to GitHub.
 2. On <https://share.streamlit.io>, choose **New app**, pick the repo, branch `main`, and set the main file to `app.py`.
-3. The model must be present. `outputs/models/` is git-ignored because the Random Forest is 64 MB, so either
-   - commit the trained model (`git add -f outputs/models/best_model.joblib`), or
-   - let the app show its "model not available" message and build it once with `python run.py` before pushing.
+3. Nothing else — `outputs/models/best_model.joblib` (65 MB) is committed so the app can predict immediately.
 
-The app fails with a clear message rather than a traceback when the model is missing.
+The model is the only large file in the repository. It is tracked deliberately: it is what the hosted app loads at startup, and retraining on every deploy would take eight minutes. `.gitignore` keeps every other `.joblib` out.
+
+If you would rather not carry 65 MB, `app.py` still starts without it and shows a clear "model not available" message instead of a traceback.
 
 
 ## Outputs
