@@ -95,7 +95,20 @@ Opens <http://localhost:8501>. Widgets for date, hour, weather and holiday, plus
 python ui.py
 ```
 
-Opens <http://localhost:8000>. No framework, no extra dependency.
+Opens <http://localhost:8000>. No framework, no extra dependency. It fills itself
+in with a typical weekday, predicts on load, and re-predicts whenever an input
+changes; the button is there for the demo where you want a deliberate beat.
+
+### What the page shows
+
+Both front ends present the same four things, so a demo explains itself without slides:
+
+- **Three numbered inputs** — when, the weather at that hour, and the 25 hourly readings, each with a one-line explanation of why it is asked for.
+- **The forecast** — volume, congestion tier, and one plain-English sentence such as *"Traffic expected to fall 22% from the current hour. 1,100 veh/h of headroom before the moderate band."*
+- **A tier scale** — the free-flow / moderate / congested bands with a marker at the prediction, so the label is not a black box.
+- **Accuracy context** — test R², MAE and MAPE, the ±MAE interval around the forecast, a 24-hour sparkline, and the recorded value when the chosen hour exists in the 2018 test set.
+
+The sentence, tier and interval are built in `ui.summarise()` and `ui.predict_from_payload()`, not in the page, so the two UIs cannot word the same forecast differently.
 
 ### What the UI asks for, and why 25 readings
 

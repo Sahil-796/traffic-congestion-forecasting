@@ -8,8 +8,8 @@ Why the standard library and not Streamlit/Flask:
     produced in;
   * the assignment's tool list does not include a web framework, and adding
     one would look like scope creep for a two-hour demo;
-  * the whole thing is one file and roughly 400 lines, which is a size a
-    student can read and defend in a viva.
+  * the whole thing is one file, which is a size a student can read and
+    defend in a viva.
 
 The important property is that the UI does NOT re-implement feature
 engineering. It builds a 24-row hourly frame from the numbers the user
@@ -117,9 +117,11 @@ def model_card() -> dict:
             "mae": round(float(best["MAE"]), 2),
             "rmse": round(float(best["RMSE"]), 2),
             "r2": round(float(best["R2"]), 4),
+            "mape": round(float(best["MAPE_%"]), 1),
         }
     except Exception:
-        return {"name": "Random Forest", "mae": 144.46, "rmse": 224.50, "r2": 0.9871}
+        return {"name": "Random Forest", "mae": 144.46, "rmse": 224.50,
+                "r2": 0.9871, "mape": 6.1}
 
 
 def meta() -> dict:
@@ -139,6 +141,22 @@ def meta() -> dict:
                 "model": model_card(),
                 "data_range": [first.strftime("%Y-%m-%d"), last.strftime("%Y-%m-%d")],
                 "default_date": "2018-06-15",
+                # Everything below is descriptive only: the same facts the
+                # report states, so a demo can be explained from the screen.
+                "dataset": {
+                    "name": config.DATASET_NAME,
+                    "source": config.DATASET_SOURCE,
+                    "licence": config.DATASET_LICENSE,
+                    "station": "I-94 westbound, MN DOT station 301",
+                    "records": "48,204 hourly records",
+                    "test_period": f"{config.TEST_START} to {last:%Y-%m-%d}",
+                },
+                "features": len(features.FEATURE_NUM) + len(features.FEATURE_CAT),
+                "tiers": [
+                    {"name": "free-flow", "upto": config.CONGESTION_FREE_MAX},
+                    {"name": "moderate", "upto": config.CONGESTION_MODERATE_MAX},
+                    {"name": "congested", "upto": None},
+                ],
             }
         return _META
 
@@ -203,6 +221,27 @@ def build_feature_row(
     return row
 
 
+def summarise(result: dict) -> str:
+    """One plain-English sentence about the forecast, shared by both UIs.
+
+    Kept here rather than in the browser so the wording (and the numbers in
+    it) has exactly one definition.
+    """
+    change = result["change_pct"]
+    if change is None or abs(change) < 1:
+        lead = "Traffic expected to hold steady."
+    else:
+        verb = "rise" if change > 0 else "fall"
+        lead = f"Traffic expected to {verb} {abs(change):.0f}% from the current hour."
+
+    near = result["next_tier"]
+    if near:
+        tail = f"{near['veh']:,.0f} veh/h of headroom before the {near['name']} band."
+    else:
+        tail = "Already inside the congested band."
+    return f"{lead} {tail}"
+
+
 def predict_from_payload(payload: dict) -> dict:
     history = payload.get("history") or []
     if not isinstance(history, list):
@@ -240,6 +279,19 @@ def predict_from_payload(payload: dict) -> dict:
     current = float(history[-1])
 
     card = meta()["model"]
+    thresholds = meta()["thresholds"]
+
+    # Distance to the next tier boundary, so the UI can say how much room is
+    # left before the forecast changes label. None once already congested.
+    free_max = float(thresholds["free_max"])
+    moderate_max = float(thresholds["moderate_max"])
+    if predicted < free_max:
+        next_tier = {"name": "moderate", "at": free_max, "veh": round(free_max - predicted, 1)}
+    elif predicted < moderate_max:
+        next_tier = {"name": "congested", "at": moderate_max,
+                     "veh": round(moderate_max - predicted, 1)}
+    else:
+        next_tier = None
 
     # Ground truth, when the chosen hour exists in the cleaned dataset.
     actual = None
@@ -250,20 +302,25 @@ def predict_from_payload(payload: dict) -> dict:
         if pd.notna(value):
             actual = float(value)
 
-    return {
+    result = {
         "timestamp": timestamp.isoformat(),
+        "forecast_for": truth_time.isoformat(),
         "predicted": round(predicted, 1),
         "tier": features.congestion_tier(predicted),
         "current": round(current, 1),
         "delta": round(predicted - current, 1),
+        "change_pct": round((predicted - current) / current * 100, 1) if current else None,
         "typical_error": card["mae"],
         "low": round(max(0.0, predicted - card["mae"]), 1),
         "high": round(predicted + card["mae"], 1),
+        "next_tier": next_tier,
         "actual": None if actual is None else round(actual, 1),
         "actual_tier": None if actual is None else features.congestion_tier(actual),
         "error": None if actual is None else round(abs(predicted - actual), 1),
-        "thresholds": meta()["thresholds"],
+        "thresholds": thresholds,
     }
+    result["summary"] = summarise(result)
+    return result
 
 
 # --------------------------------------------------------------------- page
@@ -275,154 +332,219 @@ PAGE = r"""<!doctype html>
 <title>I-94 Traffic Forecast</title>
 <style>
   :root{
-    --bg:#f4f5f7; --card:#ffffff; --ink:#111827; --muted:#6b7280;
-    --line:#e5e7eb; --accent:#0f766e; --accent-soft:#ccfbf1;
+    --bg:#f5f6f8; --card:#ffffff; --ink:#0f172a; --body:#334155; --muted:#64748b;
+    --line:#e4e8ee; --accent:#0f766e; --accent-soft:#e7f4f1;
     --free:#16a34a; --mod:#d97706; --cong:#dc2626;
   }
   *{box-sizing:border-box}
   body{
     margin:0; background:var(--bg); color:var(--ink);
-    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
     -webkit-font-smoothing:antialiased;
   }
-  header{max-width:1100px;margin:0 auto;padding:34px 20px 18px}
-  header h1{margin:0 0 6px;font-size:22px;letter-spacing:-.01em}
-  header p{margin:0;color:var(--muted);max-width:60ch}
-  main{
-    max-width:1100px;margin:0 auto;padding:0 20px 60px;
-    display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:20px;
-    align-items:start;
-  }
-  @media (max-width:900px){ main{grid-template-columns:1fr} }
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
-  .fieldset{margin-bottom:20px}
-  .fieldset:last-child{margin-bottom:0}
-  h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
-     margin:0 0 12px;font-weight:600}
-  label{display:block;font-size:13px;color:var(--muted);margin-bottom:5px}
+  .shell{max-width:1120px;margin:0 auto;padding:34px 20px 44px}
+  .eyebrow{font-size:11px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;
+           color:var(--accent);margin:0 0 10px}
+  h1{margin:0 0 8px;font-size:25px;letter-spacing:-.015em}
+  .lede{margin:0;color:var(--muted);max-width:64ch}
+  .facts{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+  .fact{font-size:12px;background:#fff;border:1px solid var(--line);border-radius:999px;
+        padding:4px 11px;color:var(--muted)}
+  .fact b{color:var(--ink);font-weight:600}
+
+  main{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);
+       gap:18px;margin-top:24px;align-items:start}
+  @media (max-width:920px){ main{grid-template-columns:1fr} }
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px}
+  .step + .step{margin-top:22px;padding-top:20px;border-top:1px solid var(--line)}
+  .step-head{display:flex;align-items:center;gap:9px;margin:0 0 4px}
+  .step-no{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-soft);
+           border-radius:6px;padding:2px 7px}
+  h2{font-size:13px;font-weight:650;margin:0;letter-spacing:.005em}
+  .hint{font-size:12.5px;color:var(--muted);margin:6px 0 14px;max-width:60ch}
+
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
   input,select{
-    width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+    width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:9px;
     font:inherit;font-size:14px;background:#fff;color:var(--ink);
   }
   input:focus,select:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
   .row.three{grid-template-columns:1fr 1fr 1fr}
-  .row.one{grid-template-columns:1fr}
-  .check{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink);margin-top:4px}
+  .check{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ink);
+         padding-top:9px}
   .check input{width:auto}
-  .hist{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
-  @media (max-width:640px){ .hist{grid-template-columns:repeat(4,1fr)} .row.three{grid-template-columns:1fr} }
-  .hist .cell label{font-size:11px;margin-bottom:3px;color:var(--muted);font-variant-numeric:tabular-nums}
-  .hist input{padding:6px 8px;font-size:13px;text-align:right}
-  .hint{font-size:12px;color:var(--muted);margin:0 0 10px}
-  .presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+
+  .hist{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+  @media (max-width:520px){ .hist{grid-template-columns:repeat(3,1fr)} .row.three{grid-template-columns:1fr} }
+  .cell label{font-size:11px;margin-bottom:3px;font-variant-numeric:tabular-nums}
+  .cell input{padding:6px 8px;font-size:13px;text-align:right;font-variant-numeric:tabular-nums}
+  .cell.now label{color:var(--accent);font-weight:700}
+  .cell.now input{border-color:var(--accent);background:#f5fdfa;font-weight:600}
+
+  .presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
   button{
-    font:inherit;font-size:13px;padding:7px 12px;border-radius:8px;cursor:pointer;
-    border:1px solid var(--line);background:#fff;color:var(--ink);
+    font:inherit;font-size:12.5px;padding:6px 11px;border-radius:9px;cursor:pointer;
+    border:1px solid var(--line);background:#fff;color:var(--body);
   }
-  button:hover{border-color:#cbd5e1}
+  button:hover{border-color:#c3ccd8;color:var(--ink)}
   button.primary{
     background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;
-    width:100%;padding:11px;font-size:14px;
+    width:100%;padding:11px;font-size:14px;margin-top:6px;
   }
+  button.primary:hover{background:#0b5f59;color:#fff}
   button.primary:disabled{opacity:.6;cursor:wait}
+
   .result{position:sticky;top:20px}
-  .big{font-size:52px;font-weight:700;letter-spacing:-.03em;line-height:1;margin:6px 0 2px;
-       font-variant-numeric:tabular-nums}
-  .unit{font-size:14px;font-weight:500;color:var(--muted);letter-spacing:0}
+  .res-when{font-size:12.5px;color:var(--muted)}
+  .big{font-size:46px;font-weight:700;letter-spacing:-.03em;line-height:1.05;
+       margin:8px 0 10px;font-variant-numeric:tabular-nums}
+  .unit{font-size:13px;font-weight:500;color:var(--muted);letter-spacing:0;margin-left:5px}
   .chip{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;
-        font-weight:600;letter-spacing:.02em}
+        font-weight:600;letter-spacing:.01em}
   .chip.free-flow{background:#dcfce7;color:#166534}
   .chip.moderate{background:#fef3c7;color:#92400e}
   .chip.congested{background:#fee2e2;color:#991b1b}
-  .band{color:var(--muted);font-size:13px;margin-top:8px}
-  .bar{margin:16px 0 4px}
-  .bar .track{height:9px;background:#f1f5f9;border-radius:999px;overflow:hidden}
-  .bar .fill{height:100%;border-radius:999px;transition:width .35s ease}
-  .bar .meta{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);
-             margin-top:5px;font-variant-numeric:tabular-nums}
-  .divider{height:1px;background:var(--line);margin:18px 0}
-  .kv{display:flex;justify-content:space-between;font-size:13px;padding:5px 0}
+  .meaning{font-size:13.5px;color:var(--body);margin:11px 0 0}
+
+  .scale{margin:18px 0 0}
+  .scale .wrap{position:relative}
+  .scale .track{display:flex;height:8px;border-radius:999px;overflow:hidden;background:#eef2f6}
+  .seg{height:100%}
+  .seg.free-flow{background:#bbf7d0}
+  .seg.moderate{background:#fde68a}
+  .seg.congested{background:#fecaca}
+  .marker{position:absolute;top:50%;width:13px;height:13px;border-radius:50%;
+          background:var(--ink);border:2.5px solid #fff;transform:translate(-50%,-50%);
+          box-shadow:0 1px 4px rgba(15,23,42,.35)}
+  .scale-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);
+                margin-top:7px;font-variant-numeric:tabular-nums}
+
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;margin:18px 0 0;
+         border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--line)}
+  .stats div{background:#fbfcfd;padding:9px 10px}
+  .stats .k{display:block;font-size:10.5px;color:var(--muted);text-transform:uppercase;
+            letter-spacing:.06em}
+  .stats .v{display:block;font-size:15px;font-weight:600;margin-top:2px;
+            font-variant-numeric:tabular-nums}
+  .spark{margin-top:14px}
+  .spark svg{width:100%;height:92px;display:block;overflow:visible}
+  .spark .cap{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);
+              margin-top:2px;font-variant-numeric:tabular-nums}
+
+  .kv{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;
+      border-bottom:1px solid #f1f5f9}
+  .kv:last-of-type{border-bottom:none}
   .kv span:first-child{color:var(--muted)}
-  .kv span:last-child{font-variant-numeric:tabular-nums}
-  .actual{margin-top:14px;padding:12px;border-radius:10px;background:#f8fafc;
-          border:1px solid var(--line);font-size:13px}
-  .actual strong{font-variant-numeric:tabular-nums}
+  .kv span:last-child{font-variant-numeric:tabular-nums;text-align:right}
+  .kv strong{font-weight:600}
+  .note{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+
+  details.how{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+  details.how summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--accent);
+                      list-style:none}
+  details.how summary::-webkit-details-marker{display:none}
+  details.how summary::before{content:"+  ";font-weight:700}
+  details.how[open] summary::before{content:"–  "}
+  details.how ul{margin:10px 0 0;padding-left:16px;font-size:12.5px;color:var(--muted)}
+  details.how li{margin-bottom:5px}
+
   .error{background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;
-         padding:10px 12px;font-size:13px;margin-top:14px;display:none}
+         padding:9px 12px;font-size:12.5px;margin-top:12px;display:none}
   .empty{color:var(--muted);font-size:13px}
-  footer{max-width:1100px;margin:0 auto;padding:0 20px 40px;color:var(--muted);font-size:12px}
+  footer{max-width:1120px;margin:0 auto;padding:0 20px 40px;color:var(--muted);font-size:11.5px;
+         display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
 </style>
 </head>
 <body>
-<header>
-  <h1>I-94 Traffic Forecast</h1>
-  <p>Westbound Interstate 94, Minnesota DOT station 301, between Minneapolis and St&nbsp;Paul.
-     Predicts the next hour's traffic volume from the last 24 hours of readings, calendar
-     position and weather. Same model, same feature code as the report.</p>
-</header>
+<div class="shell">
+  <header>
+    <p class="eyebrow">Machine learning &middot; I-94 corridor</p>
+    <h1>I-94 Traffic Forecast</h1>
+    <p class="lede">Predicts how many vehicles will pass the sensor in the next hour, from the
+       last 24 hours of readings, the day of the week and the weather.</p>
+    <div class="facts">
+      <span class="fact"><b id="f-model">Random Forest</b> model</span>
+      <span class="fact">R&sup2; <b id="f-r2">0.987</b></span>
+      <span class="fact">MAE <b id="f-mae">&plusmn;144</b> veh/h</span>
+      <span class="fact">Trained 2012&ndash;2017 &middot; tested Jan&ndash;Sep 2018</span>
+    </div>
+  </header>
 
-<main>
-  <section class="card">
-    <div class="fieldset">
-      <h2>When</h2>
-      <div class="row one">
-        <div><label for="date">Date</label><input type="date" id="date"></div>
+  <main>
+    <section class="card">
+      <div class="step">
+        <div class="step-head"><span class="step-no">1</span><h2>When are we forecasting?</h2></div>
+        <p class="hint">Pick the hour you are standing in. The forecast is for the hour after it.</p>
+        <div class="row">
+          <div><label for="date">Date</label><input type="date" id="date"></div>
+          <div><label for="hour">Current hour</label><select id="hour"></select></div>
+        </div>
+        <div class="check"><input type="checkbox" id="holiday"><span>Public holiday</span></div>
       </div>
-      <div class="row">
-        <div><label for="hour">Hour of day</label><select id="hour"></select></div>
-        <div><label for="holiday">Public holiday</label>
-             <div class="check"><input type="checkbox" id="holiday"><span>Yes, holiday</span></div>
+
+      <div class="step">
+        <div class="step-head"><span class="step-no">2</span><h2>Weather at that hour</h2></div>
+        <p class="hint">Weather is secondary to the daily traffic pattern, but snow and rain do
+           pull volumes down.</p>
+        <div class="row">
+          <div><label for="weather">Conditions</label><select id="weather"></select></div>
+          <div><label for="temp">Temperature (&deg;C)</label>
+               <input type="number" id="temp" value="20" step="0.1"></div>
+        </div>
+        <div class="row three">
+          <div><label for="rain">Rain (mm)</label>
+               <input type="number" id="rain" value="0" min="0" step="0.1"></div>
+          <div><label for="snow">Snow (mm)</label>
+               <input type="number" id="snow" value="0" min="0" step="0.1"></div>
+          <div><label for="clouds">Cloud cover (%)</label>
+               <input type="number" id="clouds" value="20" min="0" max="100" step="5"></div>
         </div>
       </div>
-    </div>
 
-    <div class="fieldset">
-      <h2>Weather at this hour</h2>
-      <div class="row">
-        <div><label for="weather">Conditions</label><select id="weather"></select></div>
-        <div><label for="temp">Temperature (&deg;C)</label><input type="number" id="temp" value="20" step="0.1"></div>
+      <div class="step">
+        <div class="step-head"><span class="step-no">3</span><h2>Last 25 hourly readings</h2></div>
+        <p class="hint">Vehicles per hour, oldest first. The outlined box is the current hour;
+           these 25 numbers become the lag and rolling features.</p>
+        <div class="hist" id="hist"></div>
+        <div class="presets">
+          <button type="button" data-preset="weekday">Typical weekday</button>
+          <button type="button" data-preset="weekend">Typical weekend</button>
+          <button type="button" data-preset="match">Match this date</button>
+          <button type="button" data-preset="quiet">Quiet night</button>
+          <button type="button" data-preset="rush">Rush hour</button>
+        </div>
+        <button class="primary" id="go">Predict next hour</button>
+        <div class="error" id="error"></div>
       </div>
-      <div class="row three">
-        <div><label for="rain">Rain (mm)</label><input type="number" id="rain" value="0" min="0" step="0.01"></div>
-        <div><label for="snow">Snow (mm)</label><input type="number" id="snow" value="0" min="0" step="0.01"></div>
-        <div><label for="clouds">Cloud cover (%)</label><input type="number" id="clouds" value="20" min="0" max="100" step="1"></div>
-      </div>
-    </div>
+    </section>
 
-    <div class="fieldset">
-      <h2>Traffic readings</h2>
-      <p class="hint">Vehicles per hour, oldest first: the value 24 hours ago through to the
-         current hour. The last box is the current hour, and it is what the model forecasts
-         one hour beyond.</p>
-      <div class="hist" id="hist"></div>
-      <div class="presets">
-        <button type="button" data-preset="weekday">Load typical weekday</button>
-        <button type="button" data-preset="weekend">Load typical weekend</button>
-        <button type="button" data-preset="quiet">Load quiet night</button>
-        <button type="button" data-preset="rush">Load rush hour</button>
-      </div>
-    </div>
-
-    <div class="fieldset">
-      <button class="primary" id="go">Predict next hour</button>
-      <div class="error" id="error"></div>
-    </div>
-  </section>
-
-  <section class="card result">
-    <h2>Forecast</h2>
-    <div id="output"><span class="empty">Fill in the form and press predict.</span></div>
-  </section>
-</main>
+    <section class="card result">
+      <h2 style="margin-bottom:12px">Forecast</h2>
+      <div id="output"><span class="empty">Fill in the form and press predict.</span></div>
+    </section>
+  </main>
+</div>
 
 <footer id="footer"></footer>
 
 <script>
 const $ = s => document.querySelector(s);
 let META = null;
+let HISTORY = [];
+
+const TIER_MAX = 7500;
 
 function fmt(n){ return Math.round(n).toLocaleString('en-US'); }
+
+function whenText(iso){
+  const d = new Date(iso);
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const hh = String(d.getHours()).padStart(2,'0');
+  return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} &middot; ${hh}:00`;
+}
 
 function fillHours(){
   const sel = $('#hour');
@@ -443,21 +565,26 @@ function hourLabels(endHour){
 
 function buildHistoryGrid(){
   const grid = $('#hist');
+  const previous = [];
+  grid.querySelectorAll('input').forEach(el => previous.push(el.value));
   grid.innerHTML = '';
   const endHour = parseInt($('#hour').value, 10);
-  const labels = hourLabels(endHour);
-  labels.forEach((h, i) => {
+  hourLabels(endHour).forEach((h, i) => {
     const cell = document.createElement('div');
-    cell.className = 'cell';
+    cell.className = 'cell' + (i === 24 ? ' now' : '');
     const id = 'v' + i;
-    cell.innerHTML = `<label for="${id}">${String(h).padStart(2,'0')}:00</label>
+    cell.innerHTML = `<label for="${id}">${String(h).padStart(2,'0')}:00${i === 24 ? ' now' : ''}</label>
                       <input type="number" id="${id}" min="0" step="1">`;
     grid.appendChild(cell);
+    if (previous[i]) document.getElementById(id).value = previous[i];
   });
 }
 
 function setHistory(values){
-  values.forEach((v, i) => { const el = document.getElementById('v' + i); if (el) el.value = Math.round(v); });
+  values.forEach((v, i) => {
+    const el = document.getElementById('v' + i);
+    if (el) el.value = Math.round(v);
+  });
 }
 
 function profileFor(dateStr){
@@ -474,47 +601,106 @@ function applyProfile(kind){
     source = labels.map(h => (h >= 0 && h <= 5) ? 480 : 900);
   } else if (kind === 'rush') {
     source = labels.map(h => (h >= 6 && h <= 9) ? 5400 : (h >= 16 && h <= 18 ? 5600 : 3600));
+  } else if (kind === 'weekday' || kind === 'weekend') {
+    source = labels.map(h => META.profiles[kind][h]);
   } else {
-    const prof = (kind === 'weekend' || kind === 'weekday') ? META.profiles[kind] : profileFor($('#date').value);
-    source = labels.map(h => prof[h]);
+    source = labels.map(h => profileFor($('#date').value)[h]);
   }
   setHistory(source);
 }
 
-function render(r){
-  const maxScale = Math.max(6000, r.current, r.predicted) * 1.05;
-  const cur = Math.max(2, (r.current / maxScale) * 100);
-  const pre = Math.max(2, (r.predicted / maxScale) * 100);
-  const dir = r.delta > 0 ? 'higher' : (r.delta < 0 ? 'lower' : 'flat');
-  const col = r.tier === 'free-flow' ? 'var(--free)' : (r.tier === 'moderate' ? 'var(--mod)' : 'var(--cong)');
+function spark(history, predicted){
+  const vals = history.concat([predicted]);
+  const w = 320, h = 88, pad = 5;
+  const max = Math.max(...vals, 1000) * 1.1;
+  const n = vals.length;
+  const x = i => pad + (i / (n - 1)) * (w - 2 * pad);
+  const y = v => h - pad - (Math.max(0, v) / max) * (h - 2 * pad);
+
+  const histPts = vals.slice(0, -1).map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+  const area = `${pad},${(h - pad).toFixed(1)} ${histPts.join(' ')} ${x(n - 2).toFixed(1)},${(h - pad).toFixed(1)}`;
+  const link = [
+    `${x(n - 2).toFixed(1)},${y(vals[n - 2]).toFixed(1)}`,
+    `${x(n - 1).toFixed(1)},${y(vals[n - 1]).toFixed(1)}`
+  ].join(' ');
+
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <polygon points="${area}" fill="#e2e8f0" opacity=".55"></polygon>
+    <polyline points="${histPts.join(' ')}" fill="none" stroke="#94a3b8" stroke-width="1.6"
+              vector-effect="non-scaling-stroke" stroke-linejoin="round"></polyline>
+    <polyline points="${link}" fill="none" stroke="#0f766e" stroke-width="1.8"
+              stroke-dasharray="4 3" vector-effect="non-scaling-stroke"></polyline>
+    <circle cx="${x(n - 2).toFixed(1)}" cy="${y(vals[n - 2]).toFixed(1)}" r="2.6" fill="#64748b"></circle>
+    <circle cx="${x(n - 1).toFixed(1)}" cy="${y(vals[n - 1]).toFixed(1)}" r="3.6" fill="#0f766e"></circle>
+  </svg>
+  <div class="cap"><span>24 hours ago</span><span>now</span><span>next hour</span></div>`;
+}
+
+function render(r, history){
+  const scale = Math.max(TIER_MAX, r.predicted, r.actual || 0);
+  const freeW = (r.thresholds.free_max / scale) * 100;
+  const modW = ((r.thresholds.moderate_max - r.thresholds.free_max) / scale) * 100;
+  const conW = 100 - freeW - modW;
+  const mark = Math.min(99, Math.max(1, (r.predicted / scale) * 100));
 
   let html = `
-    <div class="big">${fmt(r.predicted)}<span class="unit"> veh/h</span></div>
+    <div class="res-when">Next hour &middot; ${whenText(r.forecast_for)}</div>
+    <div class="big">${fmt(r.predicted)}<span class="unit">veh/h</span></div>
     <div><span class="chip ${r.tier}">${r.tier}</span></div>
-    <div class="band">Typical error &plusmn;${fmt(r.typical_error)} &rarr; likely ${fmt(r.low)}&ndash;${fmt(r.high)}</div>
+    <p class="meaning">${r.summary}</p>
 
-    <div class="bar">
-      <div class="track"><div class="fill" style="width:${cur}%;background:#94a3b8"></div></div>
-      <div class="meta"><span>now</span><span>${fmt(r.current)}</span></div>
+    <div class="scale">
+      <div class="wrap">
+        <div class="track">
+          <div class="seg free-flow" style="width:${freeW}%"></div>
+          <div class="seg moderate" style="width:${modW}%"></div>
+          <div class="seg congested" style="width:${conW}%"></div>
+        </div>
+        <div class="marker" style="left:${mark}%"></div>
+      </div>
+      <div class="scale-labels">
+        <span>0</span><span>${fmt(r.thresholds.free_max)}</span>
+        <span>${fmt(r.thresholds.moderate_max)}</span><span>${fmt(scale)}</span>
+      </div>
     </div>
-    <div class="bar">
-      <div class="track"><div class="fill" style="width:${pre}%;background:${col}"></div></div>
-      <div class="meta"><span>next hour</span><span>${fmt(r.predicted)}</span></div>
+
+    <div class="stats">
+      <div><span class="k">Test R&sup2;</span><span class="v">${META.model.r2.toFixed(3)}</span></div>
+      <div><span class="k">Mean error</span><span class="v">&plusmn;${fmt(META.model.mae)}</span></div>
+      <div><span class="k">Typical miss</span><span class="v">${META.model.mape ? META.model.mape + '%' : '6.1%'}</span></div>
     </div>
-    <div class="kv"><span>Change</span><span>${dir === 'flat' ? 'no change' : (r.delta > 0 ? '+' : '') + fmt(r.delta)} veh/h</span></div>
-    <div class="kv"><span>Free-flow below</span><span>${fmt(r.thresholds.free_max)}</span></div>
-    <div class="kv"><span>Congested above</span><span>${fmt(r.thresholds.moderate_max)}</span></div>
-  `;
+
+    <div class="spark">${spark(history, r.predicted)}</div>
+
+    <div class="kv"><span>Typical error</span>
+      <span>&plusmn;${fmt(r.typical_error)} &rarr; likely ${fmt(r.low)}&ndash;${fmt(r.high)}</span></div>
+    <div class="kv"><span>Change vs current hour</span><span>${fmt(r.current)} &rarr; <strong>${fmt(r.predicted)}</strong></span></div>`;
 
   if (r.actual !== null && r.actual !== undefined) {
-    html += `<div class="actual">
-      Recorded next hour: <strong>${fmt(r.actual)}</strong> veh/h
-      <span class="chip ${r.actual_tier}" style="margin-left:6px">${r.actual_tier}</span><br>
-      Absolute error: <strong>${fmt(r.error)}</strong> veh/h
-    </div>`;
+    html += `<div class="kv"><span>Recorded next hour</span>
+      <span><strong>${fmt(r.actual)}</strong> veh/h &middot; error ${fmt(r.error)}</span></div>
+      <p class="note">This hour exists in the 2018 test set, so the forecast can be checked
+      against what the sensor actually recorded.</p>`;
   } else {
-    html += `<div class="actual">No recorded value for that hour in the dataset, so only the forecast is shown.</div>`;
+    html += `<p class="note">That hour is outside the recorded test period, so only the
+      forecast is shown.</p>`;
   }
+
+  html += `<details class="how" open>
+      <summary>How this works</summary>
+      <ul>
+        <li>The model is a <b>${META.model.name}</b> trained on ${META.dataset.records}
+            from one I-94 sensor; the fit stops at December 2017.</li>
+        <li>Tested on ${META.dataset.test_period}, never shuffled:
+            MAE ${META.model.mae} veh/h, RMSE ${META.model.rmse}, R&sup2; ${META.model.r2.toFixed(3)}.</li>
+        <li>Your 25 readings and the weather build ${META.features} features: 7 lags,
+            6 rolling statistics, calendar and weather. The current hour alone drives
+            about 48% of the decision.</li>
+        <li>Tiers: below ${fmt(META.thresholds.free_max)} free-flow,
+            ${fmt(META.thresholds.free_max)}&ndash;${fmt(META.thresholds.moderate_max)} moderate,
+            above ${fmt(META.thresholds.moderate_max)} congested.</li>
+      </ul>
+    </details>`;
 
   $('#output').innerHTML = html;
 }
@@ -532,6 +718,7 @@ async function predict(){
     if (!isFinite(v) || v < 0) { return fail('Hourly volumes must be positive numbers.'); }
     history.push(v);
   }
+  HISTORY = history;
 
   const payload = {
     date: $('#date').value,
@@ -554,7 +741,7 @@ async function predict(){
     });
     const data = await res.json();
     if (!res.ok) { fail(data.error || 'Prediction failed.'); return; }
-    render(data);
+    render(data, history);
   } catch (e) {
     fail('Could not reach the server: ' + e.message);
   } finally {
@@ -571,6 +758,10 @@ function fail(msg){
 async function init(){
   META = await (await fetch('/api/meta')).json();
 
+  $('#f-model').textContent = META.model.name;
+  $('#f-r2').textContent = META.model.r2.toFixed(3);
+  $('#f-mae').textContent = '\u00b1' + fmt(META.model.mae);
+
   fillHours();
   $('#date').value = META.default_date;
 
@@ -583,18 +774,24 @@ async function init(){
   wsel.value = META.weather.includes('Clear') ? 'Clear' : META.weather[0];
 
   buildHistoryGrid();
-  applyProfile(null);
+  applyProfile('weekday');
 
-  $('#hour').addEventListener('change', () => { buildHistoryGrid(); applyProfile(null); });
-  $('#date').addEventListener('change', () => applyProfile(null));
+  $('#hour').addEventListener('change', () => { buildHistoryGrid(); applyProfile('match'); predict(); });
+  $('#date').addEventListener('change', () => { applyProfile('match'); predict(); });
+  $('#holiday').addEventListener('change', predict);
+  ['#weather', '#temp', '#rain', '#snow', '#clouds'].forEach(sel => {
+    $(sel).addEventListener('change', predict);
+  });
   document.querySelectorAll('[data-preset]').forEach(b => {
-    b.addEventListener('click', () => applyProfile(b.dataset.preset));
+    b.addEventListener('click', () => { applyProfile(b.dataset.preset); predict(); });
   });
   $('#go').addEventListener('click', predict);
 
-  $('#footer').textContent =
-    `I-94 westbound, MN DOT station 301 | Model: ${META.model.name} | test MAE ${META.model.mae} veh/h | ` +
-    `R2 ${META.model.r2} | dataset covers ${META.data_range[0]} to ${META.data_range[1]}`;
+  $('#footer').innerHTML =
+    `<span>${META.dataset.name} &middot; ${META.dataset.source} &middot; ${META.dataset.licence}</span>` +
+    `<span>${META.dataset.station} &middot; ${META.model.name} &middot; test ${META.data_range[0].slice(0,4)}&ndash;${META.data_range[1].slice(0,4)}</span>`;
+
+  predict();
 }
 
 init();
