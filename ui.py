@@ -54,6 +54,11 @@ _CLEAN: pd.DataFrame | None = None
 _META: dict | None = None
 _LOCK = threading.Lock()
 
+# Bump when the shape of `meta()` changes. Streamlit Cloud keeps the imported
+# `ui` module (and its cached dict) alive across redeploys, so an app built
+# against an older metadata shape would otherwise KeyError on the new keys.
+META_VERSION = 3
+
 
 def model():
     global _MODEL
@@ -127,7 +132,7 @@ def model_card() -> dict:
 def meta() -> dict:
     global _META
     with _LOCK:
-        if _META is None:
+        if _META is None or _META.get("version") != META_VERSION:
             df = clean_data()
             first = df.index.min() if len(df.index) else pd.Timestamp("2018-06-15")
             last = df.index.max() if len(df.index) else pd.Timestamp("2018-09-30")
@@ -152,6 +157,7 @@ def meta() -> dict:
                     "test_period": f"{config.TEST_START} to {last:%Y-%m-%d}",
                 },
                 "features": len(features.FEATURE_NUM) + len(features.FEATURE_CAT),
+                "version": META_VERSION,
                 "tiers": [
                     {"name": "free-flow", "upto": config.CONGESTION_FREE_MAX},
                     {"name": "moderate", "upto": config.CONGESTION_MODERATE_MAX},

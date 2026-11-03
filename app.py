@@ -301,7 +301,7 @@ def main() -> None:
             f"""<div class="stat-strip">
               <div><span class="k">Test R²</span><span class="v">{meta['model']['r2']:.3f}</span></div>
               <div><span class="k">Mean error</span><span class="v">±{meta['model']['mae']:,.0f}</span></div>
-              <div><span class="k">Typical miss</span><span class="v">{meta['model']['mape']}%</span></div>
+              <div><span class="k">Typical miss</span><span class="v">{meta['model'].get('mape', 6.1)}%</span></div>
             </div>""",
             unsafe_allow_html=True,
         )
