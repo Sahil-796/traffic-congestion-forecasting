@@ -26,6 +26,7 @@ import threading
 import webbrowser
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import joblib
 import numpy as np
@@ -36,6 +37,15 @@ import features
 
 MODEL_PATH = config.OUT_MODEL / "best_model.joblib"
 COMPARISON_CSV = config.OUT_TAB / "model_comparison.csv"
+
+# Stamp of the file this module was loaded from. A long-lived host (Streamlit
+# Cloud) re-runs the app script on a redeploy without restarting the
+# interpreter, so `import ui` can hand back the module from the previous
+# deploy. `app.py` compares this stamp to the file on disk and reloads.
+try:
+    BUILD = Path(__file__).stat().st_mtime_ns
+except OSError:  # pragma: no cover - unreadable source is not fatal
+    BUILD = 0
 
 # Fallback hourly shape for the "typical day" button, used only if the
 # cleaned CSV is missing. These are plausible I-94 volumes, not fitted values.

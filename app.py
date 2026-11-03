@@ -13,11 +13,39 @@ be wiped by the rerun that their own keystroke triggered.
 """
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
+
 import altair as alt
 import pandas as pd
 import streamlit as st
 
 import ui
+
+
+def _ui_on_disk() -> bool:
+    """Is the imported `ui` module the file that is currently on disk?
+
+    Streamlit runs this script again after a redeploy but keeps `sys.modules`,
+    so a plain `import ui` can return the module imported by the previous
+    deploy. That is how the hosted app ended up calling a `ui` that predated
+    `META_VERSION`. Comparing the stamp written by the module to the file's
+    mtime catches exactly that case and nothing else, so the cost on a normal
+    rerun is one stat() call.
+    """
+    try:
+        on_disk = Path(ui.__file__).stat().st_mtime_ns
+    except (AttributeError, OSError):
+        return True
+    return getattr(ui, "BUILD", None) == on_disk
+
+
+if not _ui_on_disk():
+    ui = importlib.reload(ui)
+
+# Read defensively: a module that is fresh on disk but somehow older in shape
+# must degrade to "no version" rather than crash the page.
+META_VERSION = getattr(ui, "META_VERSION", 0)
 
 st.set_page_config(
     page_title="I-94 Traffic Forecast",
@@ -72,14 +100,24 @@ CSS = """
 def boot() -> dict:
     """Load the model and the descriptive metadata exactly once per process.
 
-    `version` is carried out of the cache so a redeploy that changes the shape
-    of `ui.meta()` cannot keep serving the old dict from the resource cache.
+    The payload records which build of `ui` produced it, so a redeploy can
+    tell that the cached copy is from the previous one and rebuild instead of
+    serving a dict whose shape the current page does not expect.
     """
     return {
         "meta": ui.meta(),
         "weather": ui.weather_options(),
-        "version": ui.META_VERSION,
+        "version": META_VERSION,
+        "build": getattr(ui, "BUILD", None),
     }
+
+
+def _current(loaded: dict) -> bool:
+    """Does this cached payload come from the `ui` that is loaded now?"""
+    return (
+        loaded.get("version") == META_VERSION
+        and loaded.get("build") == getattr(ui, "BUILD", None)
+    )
 
 
 def fill(kind: str, hour: int, date) -> list[int]:
@@ -177,7 +215,7 @@ def history_chart(readings: list[int], predicted: float) -> alt.Chart:
 def main() -> None:
     try:
         loaded = boot()
-        if loaded.get("version") != ui.META_VERSION:
+        if not _current(loaded):
             boot.clear()
             loaded = boot()
     except RuntimeError as exc:
