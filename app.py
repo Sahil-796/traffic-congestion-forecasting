@@ -70,9 +70,16 @@ CSS = """
 
 @st.cache_resource(show_spinner="Loading model ...")
 def boot() -> dict:
-    """Load the model and the descriptive metadata exactly once per process."""
-    meta = ui.meta()
-    return {"meta": meta, "weather": ui.weather_options()}
+    """Load the model and the descriptive metadata exactly once per process.
+
+    `version` is carried out of the cache so a redeploy that changes the shape
+    of `ui.meta()` cannot keep serving the old dict from the resource cache.
+    """
+    return {
+        "meta": ui.meta(),
+        "weather": ui.weather_options(),
+        "version": ui.META_VERSION,
+    }
 
 
 def fill(kind: str, hour: int, date) -> list[int]:
@@ -170,6 +177,9 @@ def history_chart(readings: list[int], predicted: float) -> alt.Chart:
 def main() -> None:
     try:
         loaded = boot()
+        if loaded.get("version") != ui.META_VERSION:
+            boot.clear()
+            loaded = boot()
     except RuntimeError as exc:
         st.error(
             f"**Model not available.**  \n{exc}  \n"
